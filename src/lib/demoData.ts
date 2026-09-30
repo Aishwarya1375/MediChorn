@@ -8,6 +8,7 @@ export const DEMO_PATIENT = {
   name: 'Ananya Rao',
   ageOrDob: '42 F',
   id: 'DEMO-0042',
+  email: 'demo.patient@medichron.test',
 };
 
 export const DEMO_DOCUMENTS: DocumentRecord[] = [

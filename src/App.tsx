@@ -11,6 +11,8 @@ import { MobileMenuDrawer } from './components/MobileMenuDrawer';
 
 // Screens
 import { LandingScreen } from './screens/LandingScreen';
+import { LoginScreen } from './screens/LoginScreen';
+import { SignUpScreen } from './screens/SignUpScreen';
 import { UploadScreen } from './screens/UploadScreen';
 import { ProcessingScreen } from './screens/ProcessingScreen';
 import { TimelineDashboard } from './screens/TimelineDashboard';
@@ -71,12 +73,21 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 }
 
 const AppContent: React.FC = () => {
-  const { screen } = useApp();
+  const { screen, currentUser } = useApp();
 
   const renderScreen = () => {
+    // Route guard for protected screens
+    if (!currentUser && screen !== 'landing' && screen !== 'login' && screen !== 'signup') {
+      return <LoginScreen />;
+    }
+
     switch (screen) {
       case 'landing':
         return <LandingScreen />;
+      case 'login':
+        return <LoginScreen />;
+      case 'signup':
+        return <SignUpScreen />;
       case 'upload':
         return <UploadScreen />;
       case 'processing':
@@ -100,7 +111,12 @@ const AppContent: React.FC = () => {
     }
   };
 
-  const showSidebar = screen !== 'landing' && screen !== 'processing';
+  const showSidebar =
+    screen !== 'landing' &&
+    screen !== 'processing' &&
+    screen !== 'login' &&
+    screen !== 'signup' &&
+    Boolean(currentUser);
 
   return (
     <div className="min-h-screen flex flex-col bg-[#F8FAFC] text-slate-900 selection:bg-teal-100 selection:text-teal-900 overflow-x-hidden">

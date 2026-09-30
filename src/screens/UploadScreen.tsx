@@ -13,7 +13,7 @@ import {
 import { useApp } from '../context/AppContext';
 
 export const UploadScreen: React.FC = () => {
-  const { startLiveProcessing, runDemoProcessing } = useApp();
+  const { startLiveProcessing, runDemoProcessing, loadSampleHypertensionPdf } = useApp();
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -113,6 +113,52 @@ export const UploadScreen: React.FC = () => {
         >
           <Sparkles className="w-3.5 h-3.5 text-amber-600" />
           <span>Try Demo Data</span>
+        </button>
+      </div>
+
+      {/* Two Completely Separate Modes Banner */}
+      <div className="p-4 rounded-xl bg-teal-50/70 border border-teal-200/80 text-xs text-teal-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <div className="font-bold flex items-center gap-1.5 text-teal-900">
+            <Shield className="w-4 h-4 text-teal-700 shrink-0" />
+            <span>Two Strictly Separate Modes (No Data Mixing):</span>
+          </div>
+          <p className="text-teal-800 text-[11px] mt-0.5 leading-relaxed">
+            <strong>DEMO MODE:</strong> Uses synthetic patient records (Ananya Rao).<br />
+            <strong>LIVE DOCUMENT MODE:</strong> Uses the actual PDF/image uploaded by you. The Gemini backend extracts exact verbatim quotes and dates from the file bytes. Never mixed with demo data.
+          </p>
+        </div>
+      </div>
+
+      {/* Quick PDF Test Card for sample_hypertension.pdf */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-white border border-teal-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-xl bg-teal-100 text-teal-800 flex items-center justify-center shrink-0 mt-0.5">
+            <FileText className="w-5 h-5 text-teal-700" />
+          </div>
+          <div>
+            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-teal-50 text-teal-800 border border-teal-200 mb-1">
+              Live Test Document
+            </div>
+            <h3 className="font-bold text-sm text-slate-900">
+              sample_hypertension.pdf
+            </h3>
+            <p className="text-xs text-slate-600 mt-0.5 leading-snug">
+              Tests live Gemini backend analysis with the bundled document: <span className="font-medium text-slate-800">15 August 2026</span> · Diagnosis: <span className="font-medium text-slate-800">Hypertension</span> · Medication: <span className="font-medium text-slate-800">Amlodipine 5 mg once daily</span>.
+            </p>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              Source citation will be: <span className="font-mono text-teal-800 font-semibold">sample_hypertension.pdf</span>
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={loadSampleHypertensionPdf}
+          className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer shrink-0 min-h-[42px]"
+        >
+          <Sparkles className="w-4 h-4 text-teal-200" />
+          <span>Analyze sample_hypertension.pdf</span>
         </button>
       </div>
 

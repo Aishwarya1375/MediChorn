@@ -11,21 +11,38 @@ import {
   FileCheck,
   CheckCircle2,
   AlertTriangle,
+  User,
+  Stethoscope,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 export const LandingScreen: React.FC = () => {
-  const { setScreen, runDemoProcessing, switchToDocumentMode } = useApp();
+  const {
+    setScreen,
+    runDemoProcessing,
+    switchToDocumentMode,
+    currentUser,
+    loginAsDemoPatient,
+    loginAsDemoDoctor,
+    setSelectedRole,
+  } = useApp();
 
   return (
     <div className="min-h-full flex flex-col justify-between">
       {/* Hero Section */}
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-12 pb-16">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-10 sm:pt-12 pb-16">
         <div className="text-center max-w-3xl mx-auto">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-50 border border-teal-200 text-teal-800 text-xs font-semibold mb-6">
-            <Sparkles className="w-3.5 h-3.5 text-teal-600" />
-            Deterministic & Multimodal Medical Organization
-          </div>
+          {currentUser ? (
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold mb-6">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Signed in as {currentUser.name} ({currentUser.isDemoUser ? 'Demo Access' : 'Clinical Account'})</span>
+            </div>
+          ) : (
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-50 border border-teal-200 text-teal-800 text-xs font-semibold mb-6">
+              <Sparkles className="w-3.5 h-3.5 text-teal-600" />
+              <span>Deterministic & Multimodal Medical Organization</span>
+            </div>
+          )}
 
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-slate-900 tracking-tight leading-tight">
             Turn scattered medical records into{' '}
@@ -41,27 +58,146 @@ export const LandingScreen: React.FC = () => {
 
           {/* CTA Buttons */}
           <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4 max-w-md sm:max-w-none mx-auto">
-            <button
-              onClick={switchToDocumentMode}
-              className="w-full sm:w-auto px-8 py-4 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-sm sm:text-base shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2.5 cursor-pointer min-h-[48px]"
-            >
-              <Upload className="w-5 h-5" />
-              <span>UPLOAD RECORDS</span>
-            </button>
+            {currentUser ? (
+              <button
+                onClick={() => setScreen('timeline')}
+                className="w-full sm:w-auto px-8 py-4 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-sm sm:text-base shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2.5 cursor-pointer min-h-[48px]"
+              >
+                <Clock className="w-5 h-5" />
+                <span>OPEN TIMELINE DASHBOARD</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => setScreen('upload')}
+                className="w-full sm:w-auto px-8 py-4 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-sm sm:text-base shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2.5 cursor-pointer min-h-[48px]"
+              >
+                <Upload className="w-5 h-5" />
+                <span>UPLOAD RECORDS</span>
+              </button>
+            )}
 
             <button
               onClick={runDemoProcessing}
               className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 font-semibold text-sm shadow-xs hover:border-slate-400 transition-all flex items-center justify-center gap-2 group min-h-[48px]"
             >
               <Sparkles className="w-4 h-4 text-teal-600 group-hover:scale-110 transition-transform" />
-              <span>TRY DEMO</span>
+              <span>TRY DEMO (NO SIGN-UP)</span>
               <ArrowRight className="w-4 h-4 text-slate-400 group-hover:translate-x-0.5 transition-transform" />
             </button>
           </div>
 
+          {!currentUser && (
+            <div className="mt-4 flex items-center justify-center gap-3 text-xs text-slate-500">
+              <span>Already have an account?</span>
+              <button
+                onClick={() => setScreen('login')}
+                className="font-bold text-teal-700 hover:text-teal-900 underline cursor-pointer"
+              >
+                Sign In
+              </button>
+              <span>·</span>
+              <button
+                onClick={() => setScreen('signup')}
+                className="font-bold text-teal-700 hover:text-teal-900 underline cursor-pointer"
+              >
+                Create Account
+              </button>
+            </div>
+          )}
+
           <p className="mt-3 text-xs text-slate-500">
             Zero network dependence in Demo Mode. Evaluates pre-extracted records in 4 seconds.
           </p>
+
+          {/* Role Selection Gateway Cards */}
+          <div className="mt-10 max-w-2xl mx-auto">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-3 text-center">
+              Choose your role to get started
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              {/* Patient Card */}
+              <div
+                onClick={() => {
+                  setSelectedRole('patient');
+                  setScreen('login');
+                }}
+                className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200 shadow-xs hover:border-teal-500 hover:shadow-md transition-all cursor-pointer text-left group flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="w-9 h-9 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center group-hover:scale-105 transition-transform">
+                      <User className="w-4 h-4" />
+                    </div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-teal-800 bg-teal-50 px-2 py-0.5 rounded border border-teal-200">
+                      Patient
+                    </span>
+                  </div>
+                  <h3 className="font-bold text-sm text-slate-900 group-hover:text-teal-900 flex items-center justify-between">
+                    <span>Patient Portal</span>
+                    <ArrowRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-teal-700 group-hover:translate-x-0.5 transition-all" />
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1 leading-snug">
+                    For managing and reviewing your own medical records in an understandable personal care timeline.
+                  </p>
+                </div>
+
+                <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-teal-700 group-hover:underline">Sign In as Patient →</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      loginAsDemoPatient();
+                    }}
+                    className="text-[10px] font-bold text-teal-800 bg-teal-50 hover:bg-teal-100 px-2 py-1 rounded-md border border-teal-200 transition-colors cursor-pointer"
+                  >
+                    Demo Patient
+                  </button>
+                </div>
+              </div>
+
+              {/* Doctor Card */}
+              <div
+                onClick={() => {
+                  setSelectedRole('doctor');
+                  setScreen('login');
+                }}
+                className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200 shadow-xs hover:border-indigo-500 hover:shadow-md transition-all cursor-pointer text-left group flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center group-hover:scale-105 transition-transform">
+                      <Stethoscope className="w-4 h-4" />
+                    </div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-800 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                      Clinician
+                    </span>
+                  </div>
+                  <h3 className="font-bold text-sm text-slate-900 group-hover:text-indigo-950 flex items-center justify-between">
+                    <span>Doctor / Clinician</span>
+                    <ArrowRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-indigo-700 group-hover:translate-x-0.5 transition-all" />
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1 leading-snug">
+                    For reviewing longitudinal patient records, discrepancy alerts, diagnostic certainty, and verbatim citations.
+                  </p>
+                </div>
+
+                <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-indigo-700 group-hover:underline">Sign In as Doctor →</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      loginAsDemoDoctor();
+                    }}
+                    className="text-[10px] font-bold text-indigo-900 bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded-md border border-indigo-200 transition-colors cursor-pointer"
+                  >
+                    Demo Doctor
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* 5-Step Workflow */}

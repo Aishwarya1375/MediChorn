@@ -4,6 +4,7 @@ import {
   Clock,
   FileText,
   AlertTriangle,
+  Upload,
   Menu,
 } from 'lucide-react';
 import { useApp, ScreenType } from '../context/AppContext';
@@ -14,11 +15,14 @@ export const MobileBottomNav: React.FC = () => {
     setScreen,
     documents,
     conflicts,
+    currentUser,
     setIsMobileMenuOpen,
   } = useApp();
 
-  // Don't show bottom nav during active processing animation
-  if (screen === 'processing') return null;
+  // Don't show bottom nav during active processing, login, or signup screens
+  if (screen === 'processing' || screen === 'login' || screen === 'signup') return null;
+
+  const isPatient = currentUser?.role === 'patient';
 
   const tabs: Array<{
     id: ScreenType;
@@ -34,23 +38,29 @@ export const MobileBottomNav: React.FC = () => {
     },
     {
       id: 'timeline',
-      label: 'Timeline',
+      label: isPatient ? 'My Timeline' : 'Timeline',
       icon: Clock,
     },
     {
       id: 'records',
-      label: 'Records',
+      label: isPatient ? 'My Records' : 'Records',
       icon: FileText,
       badge: documents.length,
       badgeColor: 'bg-slate-200 text-slate-700',
     },
-    {
-      id: 'conflicts',
-      label: 'Alerts',
-      icon: AlertTriangle,
-      badge: conflicts.length > 0 ? conflicts.length : undefined,
-      badgeColor: 'bg-amber-500 text-white',
-    },
+    isPatient
+      ? {
+          id: 'upload',
+          label: 'Upload',
+          icon: Upload,
+        }
+      : {
+          id: 'conflicts',
+          label: 'Alerts',
+          icon: AlertTriangle,
+          badge: conflicts.length > 0 ? conflicts.length : undefined,
+          badgeColor: 'bg-amber-500 text-white',
+        },
   ];
 
   return (

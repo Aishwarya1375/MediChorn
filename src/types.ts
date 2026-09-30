@@ -223,3 +223,38 @@ export interface AnalysisResult {
     lastDate: string | null;
   };
 }
+
+export type UserRole = 'patient' | 'doctor';
+
+export interface UserProfile {
+  id: string;
+  name: string;
+  email: string;
+  isDemoUser: boolean;
+  role: UserRole;
+  roleTitle?: string;
+  avatarInitials?: string;
+  createdAt: string;
+}
+
+export interface DoctorPatientSummary {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  documentsCount: number;
+  eventsCount: number;
+  createdAt?: string;
+}
+
+export interface DatabaseStatus {
+  connected: boolean;
+  error: string | null;
+  database: string;
+  counts?: {
+    users: number;
+    documents: number;
+    events: number;
+  };
+}
+

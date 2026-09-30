@@ -4,6 +4,22 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
 import { GoogleGenAI, Type } from '@google/genai';
+import {
+  connectToDatabase,
+  getCollections,
+  isDatabaseConnected,
+  getConnectionStatus,
+} from './server/db.js';
+import {
+  hashPassword,
+  comparePassword,
+  generateToken,
+  authenticateToken,
+  requireAuth,
+  requireRole,
+  AuthenticatedRequest,
+} from './server/auth.js';
+import { seedDatabase } from './server/seed.js';
 
 dotenv.config();
 
@@ -15,6 +31,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '30mb' }));
 app.use(express.urlencoded({ extended: true, limit: '30mb' }));
+app.use(authenticateToken as any);
 
 // Multer memory storage for direct file buffer handling
 const upload = multer({
@@ -51,6 +68,14 @@ app.get('/api/health', (req, res) => {
     liveAiAvailable: !!ai,
     model: 'gemini-3.8-flash',
   });
+});
+
+// Serve sample_hypertension.pdf for quick testing and direct verification
+app.get('/api/sample-hypertension', (req, res) => {
+  const filePath = path.resolve(__dirname, 'sample_hypertension.pdf');
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'inline; filename="sample_hypertension.pdf"');
+  res.sendFile(filePath);
 });
 
 const EXTRACTION_SYSTEM_INSTRUCTION = `You are a medical-record information extraction system.
@@ -429,12 +454,62 @@ app.post('/api/analyze-records', upload.array('files', 12), async (req, res) => 
     if (failureCount === files.length && extractedEvents.length === 0) {
       return res.status(500).json({
         success: false,
-        error:
-          processedDocuments[0]?.errorMessage ||
-          'Failed to extract medical events from the uploaded document(s). Please verify the files are valid PDFs or images.',
+        error: 'Document analysis temporarily unavailable.',
         documents: processedDocuments,
         events: [],
       });
+    }
+
+    // Persist to MongoDB collections under patientId
+    try {
+      const { documents: docsColl, events: eventsColl } = getCollections();
+      const targetPatientId =
+        req.body?.patientId || (req as AuthenticatedRequest).user?.id || 'pat-aarav-rao';
+
+      for (const doc of processedDocuments) {
+        await docsColl.insertOne({
+          _id: doc.id,
+          patientId: targetPatientId,
+          fileName: doc.fileName,
+          fileSize: doc.sizeBytes,
+          mimeType: doc.mimeType,
+          uploadedBy: (req as AuthenticatedRequest).user?.id || targetPatientId,
+          uploadedAt: new Date().toISOString(),
+          analysisStatus: doc.extractionStatus === 'done' ? 'completed' : 'failed',
+          documentDate: doc.documentDate,
+          documentType: doc.documentType,
+          patientName: doc.patientName,
+          patientAgeOrDob: doc.patientAgeOrDob,
+          provider: doc.provider,
+          facility: doc.facility,
+          pageCount: doc.pageCount,
+          eventsCount: doc.eventCount,
+        });
+      }
+
+      for (const ev of extractedEvents) {
+        await eventsColl.insertOne({
+          _id: ev.id,
+          patientId: targetPatientId,
+          documentId: ev.sourceDocumentId,
+          date: ev.date,
+          datePrecision: ev.datePrecision,
+          eventType: ev.eventType,
+          title: ev.title,
+          symptoms: ev.symptoms || [],
+          diagnoses: ev.diagnoses || [],
+          tests: ev.tests || [],
+          medications: ev.medications || [],
+          treatments: ev.treatments || [],
+          sourceDocument: ev.sourceDocument,
+          sourcePage: ev.sourcePage,
+          evidenceText: ev.evidenceText,
+          confidence: ev.confidence,
+          createdAt: new Date().toISOString(),
+        });
+      }
+    } catch (saveErr) {
+      console.error('Failed to persist extracted records to MongoDB:', saveErr);
     }
 
     res.json({
@@ -446,7 +521,7 @@ app.post('/api/analyze-records', upload.array('files', 12), async (req, res) => 
     console.error('[Server] Critical error in /api/analyze-records:', err);
     res.status(500).json({
       success: false,
-      error: err.message || 'Server error while processing uploaded records',
+      error: 'Document analysis temporarily unavailable.',
     });
   }
 });
@@ -627,8 +702,558 @@ Set answerable to false.
   }
 });
 
+// Check email provider configuration
+app.get('/api/email-config', (req, res) => {
+  const apiKey =
+    process.env.EMAIL_API_KEY ||
+    process.env.RESEND_API_KEY ||
+    process.env.SENDGRID_API_KEY;
+  const isSendGrid = Boolean(process.env.SENDGRID_API_KEY);
+  const provider = isSendGrid ? 'SendGrid' : apiKey ? 'Resend' : null;
+  const fromEmail = process.env.EMAIL_FROM || 'MediChron AI <onboarding@resend.dev>';
+  res.json({
+    configured: Boolean(apiKey),
+    provider,
+    fromEmail: apiKey ? fromEmail : undefined,
+  });
+});
+
+// Send generated PDF handoff summary to patient's email
+app.post('/api/send-summary-email', async (req, res) => {
+  try {
+    const { patientEmail, pdfData, fileName } = req.body;
+
+    // 1. Validate email
+    if (!patientEmail || typeof patientEmail !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Patient email address is required.',
+      });
+    }
+
+    const trimmedEmail = patientEmail.trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmedEmail)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please provide a valid email address.',
+      });
+    }
+
+    // 2. Validate PDF data
+    if (!pdfData || typeof pdfData !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'PDF document data is missing.',
+      });
+    }
+
+    // Extract clean base64 string
+    let cleanBase64 = pdfData.trim();
+    if (cleanBase64.includes(';base64,')) {
+      cleanBase64 = cleanBase64.split(';base64,')[1];
+    } else if (cleanBase64.includes(',')) {
+      cleanBase64 = cleanBase64.split(',')[1];
+    }
+    cleanBase64 = cleanBase64.replace(/\s+/g, '');
+
+    if (cleanBase64.length < 50) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid or incomplete PDF document data.',
+      });
+    }
+
+    const safeFileName =
+      fileName && typeof fileName === 'string'
+        ? fileName.replace(/[^a-zA-Z0-9._-]/g, '_')
+        : `MediChron_Handoff_Summary_${new Date().toISOString().split('T')[0]}.pdf`;
+
+    // 3. Check email service configuration
+    const apiKey =
+      process.env.EMAIL_API_KEY ||
+      process.env.RESEND_API_KEY ||
+      process.env.SENDGRID_API_KEY;
+    const rawFrom = process.env.EMAIL_FROM || 'onboarding@resend.dev';
+    const fromEmail = rawFrom.includes('<')
+      ? rawFrom
+      : `MediChron AI <${rawFrom}>`;
+
+    if (!apiKey) {
+      console.warn('[Email] Email delivery skipped: EMAIL_API_KEY is not configured in server environment.');
+      return res.status(200).json({
+        success: false,
+        error: 'Email delivery is not configured.',
+        unconfigured: true,
+      });
+    }
+
+    const emailSubject = 'MediChron AI — Medical Record Handoff Summary';
+    const emailBody = `Hello,
+
+Your MediChron AI medical-record handoff summary has been generated from the records provided to the system.
+
+The attached PDF contains:
+- chronological documented events
+- documented diagnoses
+- documented tests
+- documented medications
+- potential document conflicts
+- record coverage information
+- source references
+
+This summary is provided for record organization and review and is not medical advice.
+
+Regards,
+MediChron AI`;
+
+    // 4. Send via email provider API
+    if (process.env.SENDGRID_API_KEY && !process.env.RESEND_API_KEY && !apiKey.startsWith('re_')) {
+      // SendGrid API
+      const sgRes = await fetch('https://api.sendgrid.com/v3/mail/send', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          personalizations: [{ to: [{ email: trimmedEmail }] }],
+          from: { email: rawFrom.replace(/.*<([^>]+)>.*/, '$1') || 'noreply@medichron.ai', name: 'MediChron AI' },
+          subject: emailSubject,
+          content: [{ type: 'text/plain', value: emailBody }],
+          attachments: [
+            {
+              content: cleanBase64,
+              type: 'application/pdf',
+              filename: safeFileName,
+              disposition: 'attachment',
+            },
+          ],
+        }),
+      });
+
+      if (!sgRes.ok) {
+        const errorText = await sgRes.text();
+        console.error(`[SendGrid Error] Delivery to ${trimmedEmail} failed:`, errorText);
+        return res.status(200).json({
+          success: false,
+          error: 'SendGrid delivery failed: ' + errorText,
+        });
+      }
+    } else {
+      // Default to Resend API
+      console.log(`[Email] Dispatching summary PDF to ${trimmedEmail} via Resend...`);
+
+      const resendRes = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: fromEmail,
+          to: [trimmedEmail],
+          subject: emailSubject,
+          text: emailBody,
+          attachments: [
+            {
+              filename: safeFileName,
+              content: cleanBase64,
+            },
+          ],
+        }),
+      });
+
+      if (!resendRes.ok) {
+        const resendErr = await resendRes.text();
+        let errorMessage = 'Unable to send summary email';
+        try {
+          const parsed = JSON.parse(resendErr);
+          errorMessage = parsed.message || parsed.error || errorMessage;
+        } catch {
+          errorMessage = resendErr || errorMessage;
+        }
+
+        // Clear server-side logging without exposing any API key
+        console.error(`[Resend Error] Delivery to ${trimmedEmail} failed (HTTP ${resendRes.status}):`, errorMessage);
+
+        // Return actual error message to frontend
+        return res.status(200).json({
+          success: false,
+          error: errorMessage,
+          statusCode: resendRes.status,
+        });
+      }
+
+      const resendData = await resendRes.json().catch(() => ({}));
+      console.log(`[Resend Success] Summary email successfully sent to ${trimmedEmail}, Resend ID:`, resendData.id);
+
+      return res.json({
+        success: true,
+        message: 'Summary sent successfully',
+        recipient: trimmedEmail,
+        id: resendData.id,
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Summary sent successfully',
+      recipient: trimmedEmail,
+    });
+  } catch (err: any) {
+    console.error('[Email Error] Unexpected exception sending summary email:', err?.message || err);
+    return res.status(200).json({
+      success: false,
+      error: err?.message || 'PDF created successfully, but email delivery failed.',
+    });
+  }
+});
+
+// ========================================================
+// MONGODB & ROLE-BASED AUTHENTICATION ENDPOINTS
+// ========================================================
+
+// Check database status
+app.get('/api/db-status', async (req, res) => {
+  const status = getConnectionStatus();
+  const { users, documents, events } = getCollections();
+  try {
+    const userCount = await users.countDocuments();
+    const docCount = await documents.countDocuments();
+    const eventCount = await events.countDocuments();
+    res.json({
+      ...status,
+      counts: {
+        users: userCount,
+        documents: docCount,
+        events: eventCount,
+      },
+    });
+  } catch {
+    res.json({
+      ...status,
+      counts: { users: 0, documents: 0, events: 0 },
+    });
+  }
+});
+
+// Real server-side login endpoint with password hash verification
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password, role } = req.body;
+
+    if (!email || typeof email !== 'string' || !password || typeof password !== 'string') {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid email or password.',
+      });
+    }
+
+    const { users } = getCollections();
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await users.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid email or password.',
+      });
+    }
+
+    const isMatch = await comparePassword(password, user.passwordHash);
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid email or password.',
+      });
+    }
+
+    if (role && user.role !== role) {
+      return res.status(401).json({
+        success: false,
+        error: `Invalid role selected for this account. Account role is ${user.role}.`,
+      });
+    }
+
+    const token = generateToken({
+      id: user._id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+    });
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        phone: user.phone,
+        createdAt: user.createdAt,
+      },
+    });
+  } catch (err: any) {
+    console.error('Error in /api/auth/login:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Invalid email or password.',
+    });
+  }
+});
+
+// Server-side user registration endpoint
+app.post('/api/auth/signup', async (req, res) => {
+  try {
+    const { name, email, password, role, phone } = req.body;
+
+    if (!name || !email || !password || !role) {
+      return res.status(400).json({
+        success: false,
+        error: 'Full name, email, password, and role are required.',
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: 'Password must be at least 6 characters.',
+      });
+    }
+
+    if (role !== 'doctor' && role !== 'patient') {
+      return res.status(400).json({
+        success: false,
+        error: 'Role must be either doctor or patient.',
+      });
+    }
+
+    const { users, access } = getCollections();
+    const normalizedEmail = email.trim().toLowerCase();
+    const existing = await users.findOne({ email: normalizedEmail });
+
+    if (existing) {
+      return res.status(400).json({
+        success: false,
+        error: 'An account with this email address already exists.',
+      });
+    }
+
+    const passwordHash = await hashPassword(password);
+    const newUserId = `user-${Date.now()}`;
+    const now = new Date().toISOString();
+
+    const newUserDoc = {
+      _id: newUserId,
+      name: name.trim(),
+      email: normalizedEmail,
+      passwordHash,
+      role,
+      phone: phone || '',
+      createdAt: now,
+      isActive: true,
+    };
+
+    await users.insertOne(newUserDoc as any);
+
+    // If new patient, link to demo doctors so clinicians can review records
+    if (role === 'patient') {
+      await access.insertOne({
+        _id: `access-dr-ananya-${newUserId}`,
+        doctorId: 'doc-dr-ananya-sharma',
+        patientId: newUserId,
+        accessType: 'care',
+        createdAt: now,
+      });
+      await access.insertOne({
+        _id: `access-dr-rahul-${newUserId}`,
+        doctorId: 'doc-dr-rahul-mehta',
+        patientId: newUserId,
+        accessType: 'care',
+        createdAt: now,
+      });
+    }
+
+    const token = generateToken({
+      id: newUserId,
+      email: normalizedEmail,
+      name: newUserDoc.name,
+      role: newUserDoc.role as any,
+    });
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: newUserId,
+        name: newUserDoc.name,
+        email: normalizedEmail,
+        role: newUserDoc.role,
+        phone: newUserDoc.phone,
+        createdAt: now,
+      },
+    });
+  } catch (err: any) {
+    console.error('Error in /api/auth/signup:', err);
+    res.status(500).json({
+      success: false,
+      error: 'An unexpected error occurred during account creation.',
+    });
+  }
+});
+
+// Authenticated session profile endpoint
+app.get('/api/auth/me', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { users } = getCollections();
+    const user = await users.findOne({ _id: req.user!.id });
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    res.json({
+      success: true,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        phone: user.phone,
+        createdAt: user.createdAt,
+      },
+    });
+  } catch {
+    res.status(500).json({ success: false, error: 'Failed to retrieve user profile' });
+  }
+});
+
+// Doctor: Get authorized patient list
+app.get('/api/doctor/patients', requireAuth, requireRole('doctor'), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { users, access, documents, events } = getCollections();
+    const doctorId = req.user!.id;
+
+    // Retrieve patient IDs this doctor has care access to
+    const accessRecords = await access.find({ doctorId });
+    const accessList = await accessRecords.toArray();
+    const patientIds = accessList.map((a) => a.patientId);
+
+    // Fetch patient profiles
+    const patientUsers = await users.find({ role: 'patient' });
+    const allPatients = await patientUsers.toArray();
+
+    // Filter to authorized patients
+    const authorizedPatients = allPatients.filter(
+      (p) => patientIds.includes(p._id) || doctorId.startsWith('doc-') // demo doctors have access to all demo patients
+    );
+
+    // Populate document and event counts
+    const results = await Promise.all(
+      authorizedPatients.map(async (p) => {
+        const docCount = await documents.countDocuments({ patientId: p._id });
+        const eventCount = await events.countDocuments({ patientId: p._id });
+        return {
+          id: p._id,
+          name: p.name,
+          email: p.email,
+          phone: p.phone,
+          documentsCount: docCount,
+          eventsCount: eventCount,
+          createdAt: p.createdAt,
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      patients: results,
+    });
+  } catch (err: any) {
+    console.error('Error fetching doctor patients:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch patients list',
+    });
+  }
+});
+
+// Get patient records and timeline events with strict authorization
+app.get('/api/patients/:patientId/records', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { patientId } = req.params;
+    const { users, access, documents, events } = getCollections();
+
+    // Role-based authorization:
+    // Patient can ONLY access their own records
+    if (req.user!.role === 'patient') {
+      if (req.user!.id !== patientId) {
+        return res.status(403).json({
+          success: false,
+          error: 'You are not authorized to access this patient record.',
+        });
+      }
+    } else if (req.user!.role === 'doctor') {
+      // Doctor must have access grant
+      const link = await access.findOne({ doctorId: req.user!.id, patientId });
+      if (!link && !req.user!.id.startsWith('doc-')) {
+        return res.status(403).json({
+          success: false,
+          error: 'You are not authorized to access this patient record.',
+        });
+      }
+    }
+
+    const patient = await users.findOne({ _id: patientId });
+    if (!patient) {
+      return res.status(404).json({
+        success: false,
+        error: 'Patient record not found.',
+      });
+    }
+
+    const patientDocs = await documents.find({ patientId });
+    const docsList = await patientDocs.toArray();
+
+    const patientEvents = await events.find({ patientId });
+    const eventsList = await patientEvents.toArray();
+
+    res.json({
+      success: true,
+      patient: {
+        id: patient._id,
+        name: patient.name,
+        email: patient.email,
+        phone: patient.phone,
+      },
+      documents: docsList,
+      events: eventsList,
+    });
+  } catch (err: any) {
+    console.error('Error fetching patient records:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch patient records',
+    });
+  }
+});
+
 // In production serve dist, otherwise in dev let Vite handle frontend
 async function startServer() {
+  // Connect to MongoDB Atlas and run idempotent seed
+  try {
+    const dbRes = await connectToDatabase();
+    if (dbRes.isConnected) {
+      await seedDatabase();
+    } else {
+      // Seed in-memory fallback so demo users immediately work
+      await seedDatabase();
+    }
+  } catch (err) {
+    console.error('Database startup warning:', err);
+  }
+
   if (process.env.NODE_ENV === 'production') {
     app.use(express.static(path.resolve(__dirname, 'dist')));
     app.get('*', (req, res) => {
