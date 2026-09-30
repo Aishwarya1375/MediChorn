@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@layer base {
+  html, body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background-color: #F8FAFC;
+    color: #0F172A;
+    overflow-x: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+.font-serif-doc {
+  font-family: 'Source Serif 4', Georgia, serif;
+}
+
+/* Hatched pattern for gaps in timeline and coverage */
+.bg-hatched-gap {
+  background: repeating-linear-gradient(
+    -45deg,
+    #F1F5F9,
+    #F1F5F9 8px,
+    #E2E8F0 8px,
+    #E2E8F0 16px
+  );
+}
+
+.bg-hatched-gap-dark {
+  background: repeating-linear-gradient(
+    -45deg,
+    #E2E8F0,
+    #E2E8F0 8px,
+    #CBD5E1 8px,
+    #CBD5E1 16px
+  );
+}
+
+/* Touch scroll helper without scrollbar */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Safe area support for modern iOS/Android navigation */
+.safe-area-pb {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+
+/* Print stylesheet for Handoff Summary */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  .print-break-inside-avoid {
+    break-inside: avoid;
+  }
+}
